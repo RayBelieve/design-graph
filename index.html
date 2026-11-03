@@ -457,7 +457,7 @@ body.modal-open #minimap { display: none; }
   <span class="toolbar-by">
     by <a href="https://noemica.io" target="_blank" rel="noopener" class="toolbar-wordmark"><span class="wm-n">n</span>oemica<span class="wm-arrow">↗</span></a>
   </span>
-  <span class="toolbar-project-wrap" style="margin-left:14px;display:inline-flex;align-items:center;gap:6px;flex-shrink:0;white-space:nowrap;">
+  <span class="toolbar-project-wrap" style="margin-left:14px;display:inline-flex;align-items:center;gap:6px;flex-shrink:0;white-space:nowrap;position:relative;">
     <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(26,26,28,0.42);">project</span>
     <select id="project-picker" title="Switch project" style="
       height:26px;padding:0 22px 0 10px;font-size:12px;font-family:inherit;
@@ -466,6 +466,32 @@ body.modal-open #minimap { display: none; }
       background-image:url(&quot;data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%232563eb' stroke-width='1.5' fill='none'/></svg>&quot;);
       background-repeat:no-repeat;background-position:right 7px center;
     "></select>
+    <button id="btn-mount" type="button" title="挂载本地草稿目录 / Mount a local draft folder" style="
+      height:26px;padding:0 9px;font-size:11px;font-family:inherit;white-space:nowrap;
+      background:#fdfaea;border:1px solid rgba(26,26,28,0.12);border-radius:5px;
+      color:rgba(26,26,28,0.62);cursor:pointer;
+    ">＋ folder</button>
+    <div id="mount-pop" hidden style="
+      position:absolute;top:calc(100% + 8px);left:0;z-index:5;width:380px;box-sizing:border-box;
+      background:#fffcf0;border:1px solid rgba(26,26,28,0.14);border-radius:8px;
+      box-shadow:0 12px 32px rgba(0,0,0,0.16);padding:12px;
+      font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;
+      color:#1a1a1c;text-align:left;white-space:normal;cursor:default;
+    ">
+      <div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(26,26,28,0.42);margin-bottom:8px;">mount draft folder</div>
+      <div style="display:flex;gap:6px;">
+        <input id="mount-path" type="text" spellcheck="false" placeholder="E:\path\to\draft" style="
+          flex:1;min-width:0;height:28px;padding:0 8px;font-size:11px;font-family:inherit;
+          background:#fff;border:1px solid rgba(26,26,28,0.16);border-radius:5px;color:#1a1a1c;outline:none;
+        ">
+        <button id="mount-go" type="button" style="
+          height:28px;padding:0 12px;font-size:11px;font-family:inherit;white-space:nowrap;
+          background:#1a1a1c;border:1px solid #1a1a1c;border-radius:5px;color:#fff;cursor:pointer;
+        ">挂载</button>
+      </div>
+      <div id="mount-msg" style="margin-top:7px;line-height:1.5;color:rgba(26,26,28,0.55);"></div>
+      <div id="mount-list" style="margin-top:9px;"></div>
+    </div>
   </span>
   <div style="display:flex;gap:6px;align-items:center;margin-left:16px;">
     <input id="filter-input" type="text" placeholder="Filter: text or /regex/flags" style="
@@ -671,7 +697,8 @@ let PROJECT_PATH = null;  // e.g. 'data/noemica' or the Trae draft root
     if (!designText) {
       fail('<h1>Design draft not found</h1>' +
         '<p>Could not load <code>' + entry.design + '</code>.</p>' +
-        '<p>Start <code>python serve.py</code> in the Design Graph directory so <code>/draft</code> maps to the Trae folder.</p>');
+        '<p>Mount a draft folder with <b>＋ folder</b> in the toolbar next to the project picker, ' +
+        'or start the server with <code>python serve.py --draft &lt;path&gt;</code>.</p>');
     }
     let doc;
     try { doc = JSON.parse(designText.replace(/^\uFEFF/, '')); }
@@ -1631,7 +1658,8 @@ function editingPagePath() {
   const n = GRAPH.nodes.find(x => x.id === currentNodeId);
   if (!n || !n.page) return '';
   const page = String(n.page).replace(/\\/g, '/').replace(/^\/+/, '');
-  if (window.TRAE_DESIGN_URL) return 'design-draft/' + page;
+  // Resolved against the same base the preview iframes use, so a Trae draft
+  // reads from beside its own .design file instead of a hardcoded folder.
   return (PROJECT_PATH ? PROJECT_PATH + '/' : '') + page;
 }
 
@@ -2759,6 +2787,133 @@ readURL();
       });
     })
     .catch(() => { sel.style.display = 'none'; });
+})();
+
+// ──────────────────────────────────────────────
+// MOUNT CONTROL — point the server at a draft folder on this machine without
+// restarting it. serve.py merges mounts into data/manifest.json, so a mounted
+// folder lands in the picker above and survives a reload via ?project=<id>.
+// ──────────────────────────────────────────────
+(function wireMountControl(){
+  const btn = document.getElementById('btn-mount');
+  const pop = document.getElementById('mount-pop');
+  const input = document.getElementById('mount-path');
+  const go = document.getElementById('mount-go');
+  const msg = document.getElementById('mount-msg');
+  const list = document.getElementById('mount-list');
+  if (!btn || !pop || !input || !go || !msg || !list) return;
+
+  function say(text, isError){
+    msg.textContent = text || '';
+    msg.style.color = isError ? '#b91c1c' : 'rgba(26,26,28,0.55)';
+  }
+
+  function paint(items){
+    list.innerHTML = '';
+    if (!items.length) return;
+    const head = document.createElement('div');
+    head.textContent = '已挂载';
+    head.style.cssText = 'font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(26,26,28,0.42);margin-bottom:5px;';
+    list.appendChild(head);
+    items.forEach(m => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 0;';
+      const label = document.createElement('span');
+      label.textContent = m.name;
+      label.style.cssText = 'flex-shrink:0;font-weight:600;';
+      const dir = document.createElement('span');
+      dir.textContent = m.dir;
+      dir.title = m.dir;
+      dir.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(26,26,28,0.5);';
+      const drop = document.createElement('button');
+      drop.type = 'button';
+      drop.textContent = '✕';
+      drop.title = '卸载 ' + m.name;
+      drop.style.cssText = 'flex-shrink:0;width:20px;height:20px;line-height:1;font-size:10px;background:none;border:1px solid rgba(26,26,28,0.12);border-radius:4px;color:rgba(26,26,28,0.5);cursor:pointer;';
+      drop.addEventListener('click', () => unmount(m));
+      row.append(label, dir, drop);
+      list.appendChild(row);
+    });
+  }
+
+  async function refresh(){
+    try {
+      const res = await fetch('api/mounts', { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      paint((await res.json()).mounts || []);
+    } catch (e) { list.innerHTML = ''; }
+  }
+
+  function resetViewParams(u){
+    ['node','fs','zoom','hover','q','date','from','to','up','down']
+      .forEach(k => u.searchParams.delete(k));
+  }
+
+  async function mount(){
+    const dir = input.value.trim();
+    if (!dir) { say('先填一个目录路径', true); input.focus(); return; }
+    say('挂载中…');
+    go.disabled = true;
+    try {
+      const res = await fetch('api/mount', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-DG-Mount': '1' },
+        body: JSON.stringify({ dir: dir })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.project) throw new Error(data.error || ('HTTP ' + res.status));
+      say('已挂载，正在打开…');
+      const u = new URL(location.href);
+      u.searchParams.set('project', data.project.id);
+      resetViewParams(u);
+      location.href = u.toString();
+    } catch (e) {
+      const text = String(e.message || e);
+      say(/failed to fetch|HTTP 501/i.test(text)
+        ? '挂载需要 serve.py（静态服务器没有 /api/mount）'
+        : text, true);
+      go.disabled = false;
+    }
+  }
+
+  async function unmount(m){
+    say('卸载中…');
+    try {
+      const res = await fetch('api/unmount', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-DG-Mount': '1' },
+        body: JSON.stringify({ id: m.id })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      if (m.id === PROJECT) {
+        const u = new URL(location.href);
+        u.searchParams.delete('project');
+        resetViewParams(u);
+        location.href = u.toString();
+        return;
+      }
+      say('已卸载 ' + m.name);
+      refresh();
+    } catch (e) { say(String(e.message || e), true); }
+  }
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    pop.hidden = !pop.hidden;
+    if (!pop.hidden) { input.focus(); refresh(); }
+  });
+  document.addEventListener('click', e => {
+    if (!pop.hidden && !pop.contains(e.target) && e.target !== btn) pop.hidden = true;
+  });
+  // Capture phase so Escape closes the panel instead of also demoting focus.
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !pop.hidden) { pop.hidden = true; e.stopPropagation(); }
+  }, true);
+  go.addEventListener('click', mount);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); mount(); }
+  });
 })();
 
 // ──────────────────────────────────────────────

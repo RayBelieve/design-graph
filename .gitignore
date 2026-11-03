@@ -3,6 +3,9 @@
 *.bak.*
 .prebrand.*
 
+# Mounted Trae draft folders (per-machine, written by serve.py)
+.dg-mounts.json
+
 # OS
 .DS_Store
 

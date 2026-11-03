@@ -69,12 +69,14 @@ Then you branch. Kill what misses. Keep what's strange. Ask for three more varia
 ```bash
 git clone git@github.com:noemica-io/design-graph.git
 cd design-graph
-python3 -m http.server 3333
+python3 serve.py
 ```
 
 Open <http://localhost:3333> — you'll land in the default project with the variants you see in the hero above. Pan with drag, zoom with scroll, click a card to focus, double-click to open full-screen.
 
-> The viewer needs an HTTP server, not `file://`. `python3 -m http.server`, `npx serve`, Caddy — any static server is fine.
+To look at a Trae draft folder that lives somewhere else on disk, click **＋ folder** in the toolbar and paste its path — no restart, no config edit. See [Mounting a draft folder](#mounting-a-draft-folder).
+
+> The viewer needs an HTTP server, not `file://`. `python3 serve.py` is the one that can mount folders; `python3 -m http.server`, `npx serve`, Caddy also work for the projects already committed under `data/`.
 
 To generate your own variants: [install Claude Code](https://docs.claude.com/claude-code), run it inside this repo, and ask it to produce N variants of a specific page. The bundled skill ([`.claude/skills/design-graph-authoring/SKILL.md`](./.claude/skills/design-graph-authoring/SKILL.md)) auto-loads and teaches Claude how to spawn parallel sub-agents and write pages eagerly. Live mode picks up each page within ~2 seconds of it landing on disk.
 
@@ -108,6 +110,20 @@ Switch via the toolbar picker, or by URL: `?project=design-graph`. The project s
    }
    ```
 4. Reload the viewer. Your project appears in the picker.
+
+### Mounting a draft folder
+
+A Trae draft usually lives in its own repo. You don't have to copy it in — point the server at it:
+
+- **In the viewer** — click **＋ folder** next to the project picker, paste the folder's path, hit 挂载. The folder shows up in the picker and the viewer opens it.
+- **At startup** — `python3 serve.py --draft /path/to/draft` (repeatable), or set `DESIGN_DRAFT_ROOT`.
+- **Over HTTP** — `POST /api/mount {"dir": "/path/to/draft"}`.
+
+A folder is mountable when it contains `design-draft.design`; the folder's own name becomes the project id, so one folder is one project. The draft is served under `/draft/<id>/`, meaning the design file and the HTML pages beside it keep their relative paths — nothing inside the draft needs rewriting.
+
+Mounts are remembered in `.dg-mounts.json` (gitignored, per machine) so they survive a restart. Remove one with the **✕** in the same toolbar panel, or `POST /api/unmount {"id": "..."}`.
+
+Mounting reads a path off the machine running the server, so `/api/mount` only accepts loopback callers, and the request carries a custom header so a stray web page can't trigger it. Binding `--host 0.0.0.0` serves the viewer to your LAN but still refuses remote mounts.
 
 ## Authoring new variants
 

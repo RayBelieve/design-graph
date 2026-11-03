@@ -1,13 +1,6 @@
 {
-  "default": "ai-stage",
+  "default": "design-graph",
   "projects": [
-    {
-      "id": "ai-stage",
-      "name": "AI Stage",
-      "description": "Trae design draft mounted from the novelwrite repository.",
-      "format": "trae",
-      "design": "/draft/design-draft.design"
-    },
     {
       "id": "design-graph",
       "name": "Design Graph",
