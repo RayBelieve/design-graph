@@ -1,0 +1,6 @@
+# cmd.exe mis-parses batch files that use LF-only line endings: it loses its
+# byte offset and resumes mid-line, so the script dies with errors like
+# "'et' is not recognized" (a truncated `set`) and the window closes instantly.
+# Pin these to CRLF so a fresh clone always runs.
+*.bat text eol=crlf
+*.cmd text eol=crlf
