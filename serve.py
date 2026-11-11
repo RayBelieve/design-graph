@@ -10,10 +10,11 @@ Mount a folder without restarting the server:
                    (requires the X-DG-Mount: 1 header, loopback callers only)
   * at startup   — python serve.py --draft <path>   (repeatable)
 
-A folder is mountable when it holds design-draft.design; the folder's own name
-becomes the project id, so one folder is one project. Mounts are remembered in
-.dg-mounts.json (gitignored) so they survive a restart. Unmount from the same
-toolbar panel, or POST /api/unmount {"id": "..."}.
+A folder is mountable when it holds design-draft.design; the folder's parent
+directory names the project (so .../spikes/uno/design-draft mounts as "uno"),
+because every draft repo is itself called design-draft. Mounts are remembered
+in .dg-mounts.json (gitignored) so they survive a restart. Unmount from the
+same toolbar panel, or POST /api/unmount {"id": "..."}.
 """
 
 import argparse
@@ -52,7 +53,27 @@ def project_from_mount(entry):
         "description": "Trae draft mounted from " + entry["dir"],
         "format": "trae",
         "design": "/draft/%s/%s" % (entry["id"], DESIGN_FILE),
+        # The real folder on disk. The viewer joins this with a node's `page`
+        # so "copy change request" hands out a path you can actually open,
+        # instead of the /draft/<id>/ URL that only resolves inside the viewer.
+        "dir": entry["dir"],
     }
+
+
+def project_name(folder):
+    """What to call a draft folder in the picker.
+
+    Every draft repo is called `design-draft`, so the folder's own name says
+    nothing: four mounts all read "design-draft" and are only told apart by the
+    -2/-3/-4 suffix `_unique_id` tags onto their ids. The parent directory is
+    what actually identifies the project — `.../spikes/uno/design-draft` is the
+    uno draft — so that is the name we use. Falls back to the folder's own name
+    when there is no parent to take it from (a drive root, say).
+    """
+    path = os.path.abspath(folder)
+    own = os.path.basename(path.rstrip("\\/")) or os.path.basename(path)
+    parent = os.path.basename(os.path.dirname(path.rstrip("\\/")))
+    return parent or own or folder
 
 
 class Mounts:
@@ -74,18 +95,29 @@ class Mounts:
         if not isinstance(stored, list):
             return
         seen = set()
+        refreshed = False
         for item in stored:
             if not isinstance(item, dict):
                 continue
             try:
-                entry = self._describe(item.get("dir"), item.get("id"))
+                # Derive the id and name from the folder instead of trusting the
+                # stored id: the naming rule is the folder's parent directory
+                # (see project_name), so a file written by an older run still
+                # holds the old ids and would keep them alive forever.
+                entry = self._describe(item.get("dir"))
             except MountError as exc:
                 print("note: dropping stored mount (%s)" % exc, file=sys.stderr)
                 continue
             if entry["id"] in seen:
                 continue
+            if entry["id"] != item.get("id") or entry["name"] != item.get("name"):
+                refreshed = True
             seen.add(entry["id"])
             self.items.append(entry)
+        # Keep the file matching what we're actually serving, so it never
+        # disagrees with the project picker.
+        if refreshed:
+            self._save()
 
     def _save(self):
         try:
@@ -123,7 +155,7 @@ class Mounts:
             others = sorted(n for n in os.listdir(folder) if n.endswith(".design"))
             hint = " (found %s instead)" % ", ".join(others) if others else ""
             raise MountError("%s has no %s%s" % (folder, DESIGN_FILE, hint))
-        name = os.path.basename(folder.rstrip("\\/")) or folder
+        name = project_name(folder)
         slug = re.sub(r"[^a-z0-9]+", "-", str(wanted_id or name).lower()).strip("-")
         return {
             "id": self._unique_id(slug or "draft"),
@@ -251,6 +283,15 @@ class GraphHandler(SimpleHTTPRequestHandler):
             if entry["id"] not in present:
                 projects.append(project_from_mount(entry))
                 present.add(entry["id"])
+        # Give committed projects the same `dir` treatment so copy-path works
+        # for them too. Skipped when the folder isn't there (e.g. a manifest
+        # entry for a project someone hasn't created yet).
+        for project in projects:
+            if project.get("dir") or not project.get("id"):
+                continue
+            folder = os.path.join(GRAPH_ROOT, "data", project["id"])
+            if os.path.isdir(folder):
+                project["dir"] = folder
         manifest["projects"] = projects
         return manifest
 

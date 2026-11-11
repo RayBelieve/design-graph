@@ -119,7 +119,7 @@ A Trae draft usually lives in its own repo. You don't have to copy it in — poi
 - **At startup** — `python3 serve.py --draft /path/to/draft` (repeatable), or set `DESIGN_DRAFT_ROOT`.
 - **Over HTTP** — `POST /api/mount {"dir": "/path/to/draft"}`.
 
-A folder is mountable when it contains `design-draft.design`; the folder's own name becomes the project id, so one folder is one project. The draft is served under `/draft/<id>/`, meaning the design file and the HTML pages beside it keep their relative paths — nothing inside the draft needs rewriting.
+A folder is mountable when it contains `design-draft.design`; the folder's parent directory names the project, so `spikes/uno/design-draft` mounts as `uno` — every draft repo is itself called `design-draft`, and the parent is the part that tells them apart. The draft is served under `/draft/<id>/`, meaning the design file and the HTML pages beside it keep their relative paths — nothing inside the draft needs rewriting.
 
 Mounts are remembered in `.dg-mounts.json` (gitignored, per machine) so they survive a restart. Remove one with the **✕** in the same toolbar panel, or `POST /api/unmount {"id": "..."}`.
 

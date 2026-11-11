@@ -665,6 +665,7 @@ body.modal-open #minimap { display: none; }
 // ──────────────────────────────────────────────
 let PROJECT = null;
 let PROJECT_PATH = null;  // e.g. 'data/noemica' or the Trae draft root
+let PROJECT_DIR = null;   // the same place as a real folder on disk, when serve.py says so
 (function loadProject(){
   const params = new URLSearchParams(location.search);
   const explicit = params.get('project');
@@ -706,12 +707,14 @@ let PROJECT_PATH = null;  // e.g. 'data/noemica' or the Trae draft root
     catch (e) { fail('<h1>Design draft is not valid JSON</h1><p>' + e.message + '</p>'); }
     window.TRAE_DESIGN_URL = entry.design;
     window.GRAPH = traeToGraph(doc);
+    PROJECT_DIR = entry.dir || null;
     const designPath = String(entry.design).split('?')[0];
     PROJECT_PATH = designPath.replace(/[^/]+$/, '').replace(/\/$/, '');
     return;
   }
 
   PROJECT_PATH = 'data/' + PROJECT;
+  PROJECT_DIR = (entry && entry.dir) || null;
   const graphText = syncFetch(PROJECT_PATH + '/graph-data.js');
   if (!graphText) {
     fail('<h1>Project not found</h1>' +
@@ -1744,12 +1747,25 @@ const modalIframe = document.getElementById('modal-iframe');
 // its contentWindow in capture phase — whichever one receives the event
 // first will forward it up to the parent.
 const FORWARDED_KEYS = new Set(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape','Enter',' ','?','/']);
+// Join a served page path onto the project's real folder on disk, using that
+// folder's own separator so the result is a path you can paste into Explorer,
+// an editor, or a terminal.
+function joinRealPath(dir, relative) {
+  const sep = /\\/.test(dir) || /^[A-Za-z]:/.test(dir) ? '\\' : '/';
+  const base = String(dir).replace(/[\\/]+$/, '').split(/[\\/]+/).join(sep);
+  const tail = String(relative).replace(/^[\\/]+/, '').split(/[\\/]+/).filter(Boolean).join(sep);
+  return tail ? base + sep + tail : base;
+}
+
 function editingPagePath() {
   const n = GRAPH.nodes.find(x => x.id === currentNodeId);
   if (!n || !n.page) return '';
   const page = String(n.page).replace(/\\/g, '/').replace(/^\/+/, '');
-  // Resolved against the same base the preview iframes use, so a Trae draft
-  // reads from beside its own .design file instead of a hardcoded folder.
+  // Prefer the real folder: `/draft/<id>/pages/x.html` only resolves inside the
+  // viewer (every mounted draft is called design-draft, so those URLs are also
+  // ambiguous between mounts). Falls back to the served path when the viewer
+  // is running behind a plain static server that has no folder to report.
+  if (PROJECT_DIR) return joinRealPath(PROJECT_DIR, page);
   return (PROJECT_PATH ? PROJECT_PATH + '/' : '') + page;
 }
 
